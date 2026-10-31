@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="アリの巣">
+<meta name="theme-color" content="#1d140d">
+<title>アリの巣観察</title>
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+html,body{margin:0;height:100%;background:#1d140d;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#hud{position:fixed;left:calc(10px + env(safe-area-inset-left));top:calc(8px + env(safe-area-inset-top));color:#fff6e6;font-size:13px;text-shadow:0 1px 3px #000a;opacity:.85;pointer-events:none;letter-spacing:.05em}
+#bSet{position:fixed;right:calc(12px + env(safe-area-inset-right));bottom:calc(12px + env(safe-area-inset-bottom));width:42px;height:42px;border-radius:21px;border:1px solid #fff3;background:#2a1c12aa;color:#f4e6cf;font-size:20px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);cursor:pointer}
+#panel{position:fixed;right:calc(12px + env(safe-area-inset-right));bottom:calc(62px + env(safe-area-inset-bottom));width:min(300px,calc(100vw - 24px));background:#241810e8;color:#f4e6cf;border:1px solid #fff2;border-radius:14px;padding:12px 14px;font-size:13px;display:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 6px 24px #0008}
+#panel.on{display:block}
+#panel h3{margin:0 0 8px;font-size:14px;font-weight:600}
+.row{margin:8px 0}.lab{opacity:.75;font-size:12px;margin-bottom:4px}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.seg button,.btn{flex:1;min-width:0;padding:7px 4px;border-radius:8px;border:1px solid #fff2;background:#3a2a1e;color:#f4e6cf;font-size:12px;cursor:pointer;white-space:nowrap}
+.seg button.on{background:#c8925a;color:#20140b;border-color:#c8925a}
+.btn{width:100%;margin-top:4px;background:#5a3e26}
+#stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center;margin-top:6px}
+#stats div{background:#0003;border-radius:8px;padding:5px 0}#stats b{display:block;font-size:17px}
+#stats span{font-size:11px;opacity:.7}
+#pop{position:fixed;max-width:230px;background:#fffaf0f2;color:#2b1d12;border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.5;box-shadow:0 4px 16px #0006;pointer-events:none;opacity:0;transition:opacity .45s;z-index:5}
+#pop b{display:block;font-size:14px;margin-bottom:2px;color:#6b3b17}
+#pop.on{opacity:1}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="pop"></div>
+<button id="bSet" aria-label="設定">⚙︎</button>
+<div id="panel"><h3>アリの巣観察</h3>
+<div class="row"><div class="lab">時間の速さ</div><div class="seg" id="sSpeed"><button data-v="0">もっとゆっくり</button><button data-v="1">ゆっくり</button><button data-v="2">ふつう</button><button data-v="3">はやく</button></div></div>
+<div class="row"><div class="lab">音</div><div class="seg" id="sSound"><button data-v="0">オフ</button><button data-v="1">オン</button></div></div>
+<div class="row"><div class="lab">道しるべ（フェロモン）</div><div class="seg" id="sTrail"><button data-v="0">かくす</button><button data-v="1">みせる</button></div></div>
+<div id="stats"><div><b id="stA">0</b><span>アリの数</span></div><div><b id="stR">0</b><span>部屋数</span></div><div><b id="stD">1</b><span>日数</span></div></div>
+<button class="btn" id="bNew">新しい巣をつくる</button>
+<div style="opacity:.55;font-size:11px;margin-top:8px">アリや部屋をタップすると説明が出ます</div>
+</div>
+<script>
+'use strict';
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const DPR=Math.min(2,window.devicePixelRatio||1);
+const SPEEDS=[0.35,0.6,1,2];
+const S0={speed:1,sound:0,trail:1};
+let ST=Object.assign({},S0);try{Object.assign(ST,JSON.parse(localStorage.getItem('antnest_v1')||'{}'))}catch(e){}
+function save(){try{localStorage.setItem('antnest_v1',JSON.stringify(ST))}catch(e){}}
+const DAY=180,SEASON_DAYS=3,SEASONS=['春','夏','秋','冬'];
+function mul32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const clamp=(v,a,b)=>v<a?a:v>b?b:v,lerp=(a,b,t)=>a+(b-a)*t;
+function mix(c1,c2,t){return[0,1,2].map(i=>Math.round(lerp(c1[i],c2[i],t)))}
+const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
+let W,H,S,surfY,R,rnd,N;
+let soilC,rimC,inC,nestC,nestDirty=true,grassC,grassSeason=-1,pherC,pherCtx;
+
+function mkC(w,h){const c=document.createElement('canvas');c.width=Math.max(1,Math.round(w));c.height=Math.max(1,Math.round(h));return c}
+
+// ---------- soil ----------
+function makeSoil(){
+  soilC=mkC(W*R,H*R);const g=soilC.getContext('2d');g.scale(R,R);
+  const gr=g.createLinearGradient(0,surfY,0,H);gr.addColorStop(0,'#8a6440');gr.addColorStop(.35,'#7a5636');gr.addColorStop(1,'#5c3f27');
+  g.fillStyle=gr;g.fillRect(0,surfY,W,H-surfY);
+  // strata
+  for(let i=0;i<7;i++){const y=surfY+(H-surfY)*rnd();g.fillStyle=`rgba(${rnd()<.5?'40,25,12':'170,130,90'},${.05+rnd()*.06})`;g.beginPath();g.moveTo(0,y);for(let x=0;x<=W;x+=40)g.lineTo(x,y+Math.sin(x*.01+i)*6);g.lineTo(W,y+14+rnd()*20);g.lineTo(0,y+14+rnd()*20);g.fill()}
+  // grains
+  const n=Math.round(W*(H-surfY)/9);
+  for(let i=0;i<n;i++){const x=rnd()*W,y=surfY+rnd()*(H-surfY);const k=rnd();
+    g.fillStyle=k<.4?`rgba(50,30,15,${.25+rnd()*.3})`:k<.8?`rgba(180,140,95,${.2+rnd()*.3})`:`rgba(220,200,160,${.2+rnd()*.25})`;
+    const s=.6+rnd()*1.4;g.fillRect(x,y,s,s)}
+  // pebbles
+  for(let i=0;i<W*(H-surfY)/9000;i++){const x=rnd()*W,y=surfY+15+rnd()*(H-surfY-15),r=(2+rnd()*6)*S;const c=110+rnd()*60|0;
+    g.fillStyle=`rgb(${c},${c-8|0},${c-20|0})`;g.beginPath();g.ellipse(x,y,r,r*(.6+rnd()*.3),rnd()*3,0,7);g.fill();
+    g.fillStyle='rgba(255,255,255,.18)';g.beginPath();g.ellipse(x-r*.3,y-r*.25,r*.4,r*.2,0,0,7);g.fill();
+    g.strokeStyle='rgba(0,0,0,.25)';g.lineWidth=.8;g.beginPath();g.ellipse(x,y,r,r*.7,0,0,7);g.stroke()}
+  // roots
+  g.lineCap='round';
+  for(let i=0;i<W/45;i++){let x=rnd()*W,y=surfY,a=Math.PI/2+(rnd()-.5)*.6,w=1.6*S;g.strokeStyle=`rgba(${200+rnd()*30|0},${170+rnd()*30|0},120,.55)`;
+    const L=(20+rnd()*60)*S;for(let k=0;k<L;k+=3){const nx=x+Math.cos(a)*3,ny=y+Math.sin(a)*3;g.lineWidth=w*(1-k/L)+.3;g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();x=nx;y=ny;a+=(rnd()-.5)*.5}}
+  // topsoil dark band
+  const tb=g.createLinearGradient(0,surfY,0,surfY+18*S);tb.addColorStop(0,'rgba(45,28,14,.65)');tb.addColorStop(1,'rgba(45,28,14,0)');g.fillStyle=tb;g.fillRect(0,surfY,W,18*S);
+  rimC=mkC(W*R,H*R);inC=mkC(W*R,H*R);nestC=mkC(W*R,H*R);
+  rimC.getContext('2d').scale(R,R);inC.getContext('2d').scale(R,R);nestDirty=true;
+}
+function carveCircle(x,y,r){const a=rimC.getContext('2d'),b=inC.getContext('2d');
+  a.fillStyle='#24160c';a.beginPath();a.arc(x,y,r+1.7*S,0,7);a.fill();
+  b.fillStyle='#3e2a1b';b.beginPath();b.arc(x,y,r,0,7);b.fill();nestDirty=true}
+function carveEllipse(n,p){const a=rimC.getContext('2d'),b=inC.getContext('2d');const rx=n.rx*p,ry=n.ry*(.35+.65*p);
+  a.fillStyle='#24160c';a.beginPath();a.ellipse(n.x,n.y,rx+1.8*S,ry+1.8*S,0,0,7);a.fill();
+  const gr=b.createLinearGradient(0,n.y-ry,0,n.y+ry);gr.addColorStop(0,'#2e1f13');gr.addColorStop(.7,'#433020');gr.addColorStop(1,'#4d3824');
+  b.fillStyle=gr;b.beginPath();b.ellipse(n.x,n.y,rx,ry,0,0,7);b.fill();nestDirty=true}
+function compose(){const g=nestC.getContext('2d');g.clearRect(0,0,nestC.width,nestC.height);g.drawImage(soilC,0,0);g.drawImage(rimC,0,0);g.drawImage(inC,0,0);nestDirty=false}
+
+// ---------- grass ----------
+function makeGrass(season){
+  grassSeason=season;const h=46*S;grassC=mkC(W*R,(h+6*S)*R);const g=grassC.getContext('2d');g.scale(R,R);const r=mul32(N.seed^77);
+  const pal=[['#5d9a3c','#79b04a','#4a8030'],['#3e7f2a','#4f9634','#2f6a22'],['#a39a45','#c0a050','#8a7a38'],['#7b7350','#8f8660','#6a6244']][season];
+  const tall=[.8,1,.85,.55][season];
+  g.lineCap='round';
+  for(let x=0;x<W;x+=2.2*S/ (1)){if(r()<.35)continue;const bh=(8+r()*30)*S*tall;const c=pal[r()*3|0];g.strokeStyle=c;g.lineWidth=(1+r()*1.2)*S;
+    const bend=(r()-.5)*12*S;g.beginPath();g.moveTo(x,h+3*S);g.quadraticCurveTo(x+bend*.3,h-bh*.5,x+bend,h-bh+3*S);g.stroke()}
+  if(season===0)for(let i=0;i<W/30;i++){const x=r()*W,y=h-(6+r()*22)*S;g.fillStyle=['#f6b6c8','#fff3a0','#ffffff','#c9b6ff'][r()*4|0];for(let k=0;k<5;k++){g.beginPath();g.arc(x+Math.cos(k*1.26)*2*S,y+Math.sin(k*1.26)*2*S,1.6*S,0,7);g.fill()}g.fillStyle='#f0c040';g.beginPath();g.arc(x,y,1.2*S,0,7);g.fill()}
+  if(season===2)for(let i=0;i<W/18;i++){const x=r()*W,y=h+(r()*3)*S;g.fillStyle=['#c8642a','#e09a30','#a8402a','#d8b040'][r()*4|0];g.beginPath();g.ellipse(x,y,3.5*S,1.8*S,r()*3,0,7);g.fill()}
+  if(season===1)for(let i=0;i<W/60;i++){const x=r()*W,y=h-(10+r()*28)*S;g.fillStyle='#ffffff';g.beginPath();g.arc(x,y,2*S,0,7);g.fill()}
+}
+
+// ---------- nest graph ----------
+const KSEQ=['nursery','food','rest','nursery','trash','food','rest','nursery','food','rest','nursery','rest','food','rest'];
+function wobble(x0,y0,x1,y1){const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy),n=Math.max(2,Math.ceil(L/(5*S)));const px=-dy/L,py=dx/L;
+  const A1=(4+rnd()*9)*S*(rnd()<.5?-1:1),A2=(1+rnd()*3)*S,f2=2+rnd()*3,ph=rnd()*6;const pts=[];
+  for(let i=0;i<=n;i++){const t=i/n,o=Math.sin(t*Math.PI)*(A1+A2*Math.sin(t*f2*Math.PI+ph));pts.push([x0+dx*t+px*o,y0+dy*t+py*o])}return pts}
+function addNode(p,x,y,kind){const P=N.nodes[p];const rx=(kind==='royal'?34:kind==='food'?36:kind==='trash'?24:27+rnd()*10)*S;
+  const n={id:N.nodes.length,p,x,y,kind,rx,ry:rx*.46,pts:wobble(P.x,P.y,x,y),dug:0,prog:0,done:false,brood:[],store:0,trash:0,kids:0,depth:P.depth+1};
+  P.kids++;N.nodes.push(n);return n}
+function ellHit(n,x,y,mx,my){const dx=(x-n.x)/(n.rx+mx),dy=(y-n.y)/(n.ry+my);return dx*dx+dy*dy<1}
+function planNext(){
+  const ch=N.nodes.filter(n=>n.kind!=='ent');const k=KSEQ[(ch.length-1)%KSEQ.length];
+  const parents=ch.filter(n=>n.done&&n.kids<3);if(!parents.length)return null;
+  for(let t=0;t<80;t++){const P=parents[rnd()*parents.length|0];let ang;const u=rnd();
+    if(u<.25){ang=rnd()<.5?(-.08+rnd()*.3)*Math.PI:Math.PI-(-.08+rnd()*.3)*Math.PI}else ang=(.18+rnd()*.64)*Math.PI;
+    const len=(75+rnd()*95)*S*Math.max(1,Math.sqrt((H-surfY)/(560*S))),x=P.x+Math.cos(ang)*len,y=P.y+Math.sin(ang)*len;const rx=36*S,ry=17*S;
+    if(x<rx+18||x>W-rx-18||y<surfY+75*S||y>H-ry-22)continue;
+    let ok=true;for(const n of ch){const dx=(x-n.x)/(n.rx+rx+26*S),dy=(y-n.y)/(n.ry+ry+20*S);if(dx*dx+dy*dy<1){ok=false;break}}
+    if(!ok)continue;
+    for(let s=1;s<8&&ok;s++){const sx=lerp(P.x,x,s/8),sy=lerp(P.y,y,s/8);
+      for(const n of ch){if(n===P)continue;if(ellHit(n,sx,sy,12*S,12*S)){ok=false;break}
+        if(n.p>0||n.p===0){for(let i=0;i<n.pts.length;i+=2){const q=n.pts[i];if(Math.abs(q[0]-sx)<14*S&&Math.abs(q[1]-sy)<14*S&&!(n===P||N.nodes[n.p]===P&&false)){ if(Math.hypot(q[0]-P.x,q[1]-P.y)>P.rx+10*S){ok=false;break}}}}
+        if(!ok)break}}
+    if(!ok)continue;
+    return addNode(P.id,x,y,k)}
+  return null}
+function finishNode(n){for(let i=n.dug;i<n.pts.length;i++)carveCircle(n.pts[i][0],n.pts[i][1],4.2*S);n.dug=n.pts.length;n.prog=1;carveEllipse(n,1);n.done=true}
+function anc(id){const a=[];while(id>=0){a.push(id);id=N.nodes[id].p}return a}
+function path(a,b){if(a===b)return[];const A=anc(a),B=anc(b);let l=-1;for(const x of A)if(B.includes(x)){l=x;break}
+  const out=[];for(const x of A){if(x===l)break;const p=N.nodes[x].pts;for(let i=p.length-1;i>=0;i--)out.push(p[i])}
+  const down=[];for(const x of B){if(x===l)break;down.unshift(x)}
+  for(const x of down){const p=N.nodes[x].pts;for(const q of p)out.push(q)}return out}
+function spot(n,floor=true){const r=rnd()*2-1;return[n.x+r*n.rx*.72,n.y+n.ry*(floor?.25+rnd()*.45:(rnd()-.5)*.8)]}
+function moundH(x){const d=(x-N.entX)/N.mw;return d*d<1?N.mh*(1-d*d)*(1-.35*Math.exp(-d*d*40)):0}
+function surfAt(x){return surfY-moundH(x)}
+
+// ---------- ants ----------
+function mkAnt(n,q){const s=spot(n);return{x:s[0],y:s[1],a:rnd()*6,node:n.id,off:true,plan:[],carry:null,ph:rnd()*6,queen:!!q,surf:false,job:'',lay:10,size:(q?18:11.5+rnd()*1.5)*S,col:q?[92,40,22]:[38+rnd()*14|0,22+rnd()*8|0,14]}}
+function newNest(){
+  W=Math.max(320,innerWidth);H=Math.max(400,innerHeight);S=clamp(Math.min(W,H)/680,.72,1.35);surfY=Math.round(H*(H>W?.19:.24));R=DPR;
+  const seed=(Date.now()^(Math.random()*1e9))>>>0;rnd=mul32(seed);
+  N={seed,nodes:[],ants:[],food:[],t:DAY*.04,entX:W*(.32+rnd()*.36),mh:4*S,mw:30*S,grains:0,dig:null,digCool:6,foodCool:4,rain:null,raindrops:[],flakes:[],clouds:[],stars:[],dayNo:0,consumed:0,emerged:0};
+  N.nodes.push({id:0,p:-1,x:N.entX,y:surfY,kind:'ent',rx:6*S,ry:4*S,pts:[],dug:0,prog:1,done:true,brood:[],kids:0,depth:0});
+  makeSoil();
+  const ry=surfY+(95+rnd()*50)*S;const royal=addNode(0,clamp(N.entX+(rnd()-.5)*120*S,60,W-60),ry,'royal');finishNode(royal);carveCircle(N.entX,surfY,5*S);
+  N.royal=royal;N.queen=mkAnt(royal,true);N.queen.x=royal.x;N.queen.y=royal.y+royal.ry*.25;
+  for(let i=0;i<7;i++)N.ants.push(mkAnt(royal));
+  for(let i=0;i<3;i++)royal.brood.push({st:0,t:rnd()*20,ox:(rnd()-.5)*.5});
+  for(let i=0;i<90;i++)N.stars.push([rnd()*W,rnd()*surfY*.9,rnd()*1.3+.3,rnd()*6]);
+  for(let i=0;i<4;i++)N.clouds.push({x:rnd()*W,y:surfY*(.15+rnd()*.45),s:(30+rnd()*40)*S,v:(3+rnd()*5)*S});
+  pherC=mkC(Math.ceil(W/6),Math.ceil(H/6));pherCtx=pherC.getContext('2d');N.ph=new Float32Array(pherC.width*pherC.height);N.phT=0;
+  grassSeason=-1;N.dig=planNext();newDay(0);fit();
+}
+function newDay(d){N.dayNo=d;const se=season();N.rain=null;
+  if(d>0&&rnd()<(se===3?.3:.28)){const s=.05+rnd()*.3;N.rain={s,e:s+.08+rnd()*.15,snow:se===3}}}
+function season(){return Math.floor(N.dayNo/SEASON_DAYS)%4}
+function tod(){return(N.t/DAY)%1}
+function sunAlt(){return Math.sin(tod()*Math.PI*2)}
+function light(){return clamp((sunAlt()+.12)/.4,0,1)}
+function raining(){const t=tod();return N.rain&&t>N.rain.s&&t<N.rain.e?N.rain:null}
+function chambers(f){return N.nodes.filter(n=>n.kind!=='ent'&&n.done&&(!f||f(n)))}
+function pick(a){return a[rnd()*a.length|0]}
+function goTo(ant,id,pl){if(ant.off){const n=N.nodes[ant.node];pl.push({t:'pts',p:[[n.x,n.y]]});ant.off=false}pl.push({t:'pts',p:path(ant.node,id)});ant.node=id}
+function wanderIn(ant,n,pl,k=2){goTo(ant,n.id,pl);for(let i=0;i<k;i++){pl.push({t:'pts',p:[spot(n)]});pl.push({t:'wait',d:2+rnd()*6})}ant.off=true}
+function choose(ant){
+  const pl=[];const L=light(),se=season(),rain=raining();const pop=N.ants.length;
+  const count=j=>N.ants.reduce((s,a)=>s+(a.job===j),0);
+  ant.job='';
+  if(se===3&&!(N.dig&&rnd()<.15&&count('dig')<2)){const deep=chambers().sort((a,b)=>b.y-a.y).slice(0,2);ant.job='rest';wanderIn(ant,pick(deep),pl,3);ant.plan=pl;return}
+  if(N.dig&&count('dig')<Math.max(2,Math.min(6,pop/5))&&rnd()<.7&&!rain){ant.job='dig';planDig(ant,pl);ant.plan=pl;return}
+  const roy=N.royal,nurs=chambers(n=>n.kind==='nursery');
+  if(roy.brood.some(b=>b.st===0)&&nurs.length&&count('carry')<2&&rnd()<.6){ant.job='carry';planCarry(ant,pl,nurs);ant.plan=pl;return}
+  if(L>.5&&!rain&&N.food.some(f=>f.amt>0)&&count('forage')<Math.max(2,pop/3)&&rnd()<.8){ant.job='forage';planForage(ant,pl);ant.plan=pl;return}
+  const br=chambers(n=>n.brood.length>0);
+  if(br.length&&rnd()<.4){ant.job='nurse';const n=pick(br);goTo(ant,n.id,pl);for(let i=0;i<2;i++){const b=pick(n.brood);pl.push({t:'pts',p:[[n.x+b.ox*n.rx*1.6,n.y+n.ry*.5]]});pl.push({t:'wait',d:2+rnd()*3})}ant.off=true;ant.plan=pl;return}
+  if(L<.3&&rnd()<.5){ant.job='rest';wanderIn(ant,pick(chambers(n=>n.kind==='rest'||n.kind==='royal')),pl,2);ant.plan=pl;return}
+  if(rnd()<.15&&L>.5&&!rain&&se!==3){ant.job='patrol';goTo(ant,0,pl);pl.push({t:'surf',x:clamp(N.entX+(rnd()-.5)*W*.6,15,W-15)});pl.push({t:'wait',d:1+rnd()*2});pl.push({t:'surf',x:N.entX});ant.plan=pl;return}
+  ant.job='idle';wanderIn(ant,pick(chambers()),pl,1+(rnd()*2|0));ant.plan=pl}
+function planDig(ant,pl){const n=N.dig;goTo(ant,n.p,pl);const tip=n.pts.slice(0,Math.max(1,n.dug));const go=tip.slice();if(n.dug>=n.pts.length)go.push(spot(n,false));
+  pl.push({t:'pts',p:go});pl.push({t:'wait',d:1.2+rnd()*1.2});
+  pl.push({t:'do',f:()=>{if(N.dig===n){digStep(n);ant.carry='grain'}}});
+  pl.push({t:'pts',p:go.slice().reverse()});pl.push({t:'pts',p:path(n.p,0)});ant.node=0;
+  const dx=N.entX+(rnd()<.5?-1:1)*(N.mw*(.35+rnd()*.6));pl.push({t:'surf',x:dx});
+  pl.push({t:'do',f:()=>{if(ant.carry==='grain'){N.grains++;N.mh=Math.min(28*S,(4+Math.sqrt(N.grains)*1.3)*S);N.mw=Math.min(95*S,(30+Math.sqrt(N.grains)*3)*S)}ant.carry=null}});
+  pl.push({t:'surf',x:N.entX})}
+function digStep(n){if(n.dug<n.pts.length){const e=Math.min(n.pts.length,n.dug+3);for(let i=n.dug;i<e;i++)carveCircle(n.pts[i][0],n.pts[i][1],4.2*S);n.dug=e}
+  else{n.prog=Math.min(1,n.prog+.14);carveEllipse(n,n.prog);if(n.prog>=1){n.done=true;N.dig=null;N.digCool=10+N.nodes.length*3}}}
+function planForage(ant,pl){const f=pick(N.food.filter(f=>f.amt>0));goTo(ant,0,pl);pl.push({t:'surf',x:f.x+(rnd()-.5)*6*S});pl.push({t:'wait',d:1+rnd()});
+  pl.push({t:'do',f:()=>{if(f.amt>0){f.amt--;ant.carry=f.kind}}});pl.push({t:'surf',x:N.entX});
+  const fc=chambers(n=>n.kind==='food');const tgt=fc.length?pick(fc):N.royal;pl.push({t:'pts',p:path(0,tgt.id)});ant.node=tgt.id;
+  pl.push({t:'pts',p:[spot(tgt)]});pl.push({t:'do',f:()=>{if(ant.carry&&ant.carry!=='grain'){tgt.store++}ant.carry=null}});pl.push({t:'wait',d:1+rnd()*2});ant.off=true}
+function planCarry(ant,pl,nurs){const r=N.royal;goTo(ant,r.id,pl);let egg=null;
+  pl.push({t:'pts',p:[[r.x,r.y+r.ry*.5]]});pl.push({t:'do',f:()=>{const i=r.brood.findIndex(b=>b.st===0);if(i>=0){egg=r.brood.splice(i,1)[0];ant.carry='egg'}}});
+  pl.push({t:'pts',p:[[r.x,r.y]]});const n=nurs.sort((a,b)=>a.brood.length-b.brood.length)[0];pl.push({t:'pts',p:path(r.id,n.id)});ant.node=n.id;
+  const ox=(rnd()-.5)*.55;pl.push({t:'pts',p:[[n.x+ox*n.rx*1.6,n.y+n.ry*.45]]});pl.push({t:'do',f:()=>{if(egg){egg.ox=ox;n.brood.push(egg)}ant.carry=null}});ant.off=true}
+function stepAnt(a,dt){let budget=(a.queen?5:21)*S*dt*(a.carry?.85:1);let guard=0;
+  while(guard++<40){if(!a.plan.length){if(a.queen){qPlan(a)}else choose(a);if(!a.plan.length)return}
+    const s=a.plan[0];
+    if(s.t==='wait'){a.ph+=dt*1.2;s.d-=dt;if(s.d<=0)a.plan.shift();return}
+    if(s.t==='do'){s.f();a.plan.shift();continue}
+    let tx,ty;if(s.t==='pts'){s.i=s.i||0;if(s.i>=s.p.length){a.plan.shift();continue}tx=s.p[s.i][0];ty=s.p[s.i][1]}
+    else{tx=s.x;ty=surfAt(tx)-1.5*S;a.surf=true}
+    const dx=tx-a.x,dy=(s.t==='surf'?0:ty-a.y),d=s.t==='surf'?Math.abs(dx):Math.hypot(dx,dy);
+    if(d<.01){if(s.t==='pts')s.i++;else{a.plan.shift();if(Math.abs(a.x-N.entX)<1)a.surf=false}continue}
+    const m=Math.min(d,budget);
+    if(s.t==='surf'){a.x+=Math.sign(dx)*m;const y=surfAt(a.x)-1.6*S;const sl=surfAt(a.x+Math.sign(dx)*3)-surfAt(a.x);a.y=y;turn(a,Math.atan2(sl,Math.sign(dx)*3),dt)}
+    else{a.x+=dx/d*m;a.y+=dy/d*m;if(d>.5)turn(a,Math.atan2(dy,dx),dt)}
+    a.ph+=m/(1.6*S);budget-=m;
+    if(ST.trail&&a.carry&&a.carry!=='grain'&&a.carry!=='egg'){const gi=(a.y/6|0)*pherC.width+(a.x/6|0);if(gi>=0&&gi<N.ph.length)N.ph[gi]=Math.min(1,N.ph[gi]+m*.025)}
+    if(budget<=0)return}}
+function turn(a,t,dt){let d=t-a.a;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;a.a+=d*Math.min(1,dt*12)}
+function qPlan(q){const r=N.royal;q.plan=[{t:'pts',p:[[r.x+(rnd()-.5)*r.rx*.6,r.y+r.ry*(.2+rnd()*.25)]]},{t:'wait',d:5+rnd()*8}]}
+
+// ---------- simulation ----------
+function update(dt){
+  const d0=Math.floor(N.t/DAY);N.t+=dt;const d1=Math.floor(N.t/DAY);if(d1!==d0)newDay(d1);
+  const se=season(),L=light(),rain=raining();
+  if(!N.dig){N.digCool-=dt;if(N.digCool<=0){N.dig=planNext();N.digCool=30}}
+  // queen laying
+  const pop=N.ants.length,broodN=N.nodes.reduce((s,n)=>s+n.brood.length,0);
+  N.queen.lay-=dt;if(N.queen.lay<=0){N.queen.lay=26+rnd()*14;if(se!==3&&pop+broodN<64&&N.royal.brood.length<10){N.royal.brood.push({st:0,t:0,ox:(rnd()-.5)*.5})}}
+  // brood
+  const fc=chambers(n=>n.store>0);
+  for(const n of N.nodes){for(let i=n.brood.length-1;i>=0;i--){const b=n.brood[i];let r=se===3?.25:1;
+    if(b.st===1){if(fc.length){const f=pick(fc);if(rnd()<dt*.025){f.store--;N.consumed++;if(N.consumed%3===0){const tr=chambers(n=>n.kind==='trash');if(tr.length)tr[0].trash++}}}else r*=.4}
+    b.t+=dt*r;const lim=[45,60,50][b.st];if(b.t>lim){b.t=0;b.st++;if(b.st>2){n.brood.splice(i,1);if(N.ants.length<70){const a=mkAnt(n);a.x=n.x+b.ox*n.rx*1.6;a.y=n.y+n.ry*.45;N.ants.push(a);N.emerged++}}}}}
+  for(const n of N.nodes)if(n.store<0)n.store=0;
+  // food spawn
+  N.foodCool-=dt;if(N.foodCool<=0){N.foodCool=14+rnd()*16;N.food=N.food.filter(f=>f.amt>0);
+    if(se!==3&&L>.4&&N.food.length<4){let x;do{x=20+rnd()*(W-40)}while(Math.abs(x-N.entX)<N.mw+25*S);const k=pick(['seed','seed','crumb','bug','sugar','petal']);N.food.push({x,kind:k,amt:k==='bug'?10:4+(rnd()*5|0),max:0,r:rnd()*6});N.food[N.food.length-1].max=N.food[N.food.length-1].amt}}
+  for(const a of N.ants)stepAnt(a,dt);stepAnt(N.queen,dt);
+  // pheromone decay
+  if(ST.trail){const k=Math.exp(-dt/35);const p=N.ph;for(let i=0;i<p.length;i++)if(p[i]>0)p[i]=p[i]>.003?p[i]*k:0}
+  for(const c of N.clouds){c.x+=c.v*dt;if(c.x-c.s*3>W)c.x=-c.s*3}
+}
+
+// ---------- draw ----------
+let VS=1,VX=0,VY=0;
+function fit(){cv.width=Math.round(innerWidth*DPR);cv.height=Math.round(innerHeight*DPR);VS=Math.min(innerWidth/W,innerHeight/H);VX=(innerWidth-W*VS)/2;VY=(innerHeight-H*VS)/2}
+const SKY_D=[[96,160,214],[196,226,240]],SKY_N=[[8,14,36],[26,38,72]],SKY_S=[[70,90,140],[236,160,110]];
+function drawSky(L,rain){const t=tod(),sa=sunAlt();const dusk=clamp(1-Math.abs(sa)/.25,0,1)*(sa>-0.2?1:0);
+  let top=mix(SKY_N[0],SKY_D[0],L),bot=mix(SKY_N[1],SKY_D[1],L);top=mix(top,SKY_S[0],dusk*.5);bot=mix(bot,SKY_S[1],dusk*.6);
+  if(rain||season()===3&&L>.3){const gy=rain?.55:.25;top=mix(top,[110,118,128].map(v=>v*L+20),gy);bot=mix(bot,[150,156,164].map(v=>v*L+25),gy)}
+  const g=ctx.createLinearGradient(0,0,0,surfY);g.addColorStop(0,rgb(top));g.addColorStop(1,rgb(bot));ctx.fillStyle=g;ctx.fillRect(0,0,W,surfY+2);
+  if(L<.8){ctx.fillStyle='#fff';for(const s of N.stars){ctx.globalAlpha=(1-L)*(.5+.5*Math.sin(N.t*.8+s[3]))*(rain?.2:1);ctx.fillRect(s[0],s[1],s[2],s[2])}ctx.globalAlpha=1}
+  // sun / moon
+  const u=t<.5?t*2:(t-.5)*2,bx=W*(.08+.84*u),by=surfY*(.95-.8*Math.sin(u*Math.PI));
+  if(t<.5){const g2=ctx.createRadialGradient(bx,by,0,bx,by,40*S);g2.addColorStop(0,'rgba(255,240,190,.9)');g2.addColorStop(1,'rgba(255,240,190,0)');ctx.fillStyle=g2;ctx.beginPath();ctx.arc(bx,by,40*S,0,7);ctx.fill();ctx.fillStyle=dusk>.3?'#ffcf80':'#fff6d8';ctx.beginPath();ctx.arc(bx,by,11*S,0,7);ctx.fill()}
+  else{ctx.fillStyle='#f4f0dc';ctx.beginPath();ctx.arc(bx,by,9*S,0,7);ctx.fill();ctx.fillStyle=rgb(top);ctx.beginPath();ctx.arc(bx+4*S,by-2*S,8*S,0,7);ctx.fill()}
+  // clouds
+  for(const c of N.clouds){const a=rain?.85:.55;ctx.fillStyle=rain?`rgba(${120*L+40|0},${125*L+42|0},${135*L+48|0},${a})`:`rgba(${255*L+50|0},${255*L+55|0},${255*L+70|0},${a*(.4+.6*L)})`;
+    for(let k=0;k<4;k++){ctx.beginPath();ctx.ellipse(c.x+(k-1.5)*c.s*.7,c.y+(k%2)*c.s*.12,c.s*(.7+(k%2)*.25),c.s*.38,0,0,7);ctx.fill()}}
+}
+const FOODC={seed:'#d9b46a',crumb:'#f0d9a0',bug:'#3a3a28',sugar:'#ffffff',petal:'#f6b0c4'};
+function drawFoodItem(x,y,k,s,r){ctx.fillStyle=FOODC[k];ctx.beginPath();
+  if(k==='seed'){ctx.ellipse(x,y,2.4*s,1.5*s,r,0,7)}else if(k==='crumb'){ctx.rect(x-1.8*s,y-1.5*s,3.6*s,3*s)}else if(k==='bug'){ctx.ellipse(x,y,3*s,1.6*s,r,0,7)}else if(k==='sugar'){ctx.rect(x-1.3*s,y-1.3*s,2.6*s,2.6*s)}else{ctx.ellipse(x,y,2.6*s,1.4*s,r,0,7)}ctx.fill()}
+function drawContents(){
+  for(const n of N.nodes){if(n.kind==='ent'||n.prog<.5)continue;
+    if(n.store>0){const c=Math.min(n.store,40);const r=mul32(n.id*99);for(let i=0;i<c;i++){const row=Math.floor(Math.sqrt(i));const x=n.x+(r()-.5)*n.rx*(1.3-row*.15),y=n.y+n.ry*.78-row*2.2*S-r()*1.5*S;drawFoodItem(x,y,['seed','seed','crumb','sugar'][r()*4|0],S*.8,r()*3)}}
+    if(n.trash>0){const r=mul32(n.id*7);for(let i=0;i<Math.min(n.trash,40);i++){ctx.fillStyle=['#2a2016','#5a4a30','#1a1410'][r()*3|0];ctx.fillRect(n.x+(r()-.5)*n.rx*1.3,n.y+n.ry*.6-r()*4*S,2*S,1.5*S)}}
+    for(const b of n.brood){const x=n.x+b.ox*n.rx*1.6,y=n.y+n.ry*.62;
+      if(b.st===0){ctx.fillStyle='#fbf6ea';ctx.beginPath();ctx.ellipse(x,y,1.6*S,1.1*S,0,0,7);ctx.fill()}
+      else if(b.st===1){const g=.6+.4*Math.min(1,b.t/60);ctx.fillStyle='#f4ecd8';ctx.beginPath();ctx.ellipse(x,y-.4*S,3*S*g,1.9*S*g,.2,0,7);ctx.fill();ctx.strokeStyle='rgba(150,120,90,.5)';ctx.lineWidth=.5;for(let k=-1;k<=1;k++){ctx.beginPath();ctx.moveTo(x+k*S*g,y-2*S*g);ctx.lineTo(x+k*S*g,y+1.2*S*g);ctx.stroke()}}
+      else{ctx.fillStyle=b.t>35?'#d8b98a':'#efdcb6';ctx.beginPath();ctx.ellipse(x,y-.6*S,3.4*S,2*S,0,0,7);ctx.fill();ctx.fillStyle='rgba(120,80,40,.35)';ctx.beginPath();ctx.ellipse(x+1.6*S,y-.6*S,1*S,1.4*S,0,0,7);ctx.fill()}}}
+}
+function drawSurface(L){
+  const se=season();if(se!==grassSeason)makeGrass(se);
+  // mound
+  const mx=N.entX,mw=N.mw;ctx.fillStyle='#7b5733';ctx.beginPath();ctx.moveTo(mx-mw,surfY+1);for(let x=-mw;x<=mw;x+=2)ctx.lineTo(mx+x,surfAt(mx+x));ctx.lineTo(mx+mw,surfY+1);ctx.fill();
+  const r=mul32(N.seed);ctx.fillStyle='rgba(60,38,20,.5)';for(let i=0;i<Math.min(260,N.grains*3+20);i++){const x=mx+(r()*2-1)*mw*.95;const top=surfAt(x);ctx.fillRect(x,top+r()*(surfY-top+1),1.3*S,1.3*S)}
+  ctx.drawImage(grassC,0,surfY-46*S,W,52*S);
+  // entrance hole
+  ctx.fillStyle='#1c1008';ctx.beginPath();ctx.ellipse(mx,surfAt(mx)+1*S,4.5*S,2.6*S,0,0,7);ctx.fill();
+  for(const f of N.food){if(f.amt<=0)continue;const r2=mul32(f.r*1e5|0);for(let i=0;i<f.amt;i++)drawFoodItem(f.x+(r2()-.5)*8*S,surfY-1.5*S-r2()*3*S,f.kind,S,r2()*3)}
+  if(se===3){ctx.fillStyle='rgba(245,248,255,.92)';ctx.beginPath();ctx.moveTo(0,surfY+2*S);for(let x=0;x<=W;x+=8){ctx.lineTo(x,surfAt(x)-3*S-Math.sin(x*.05)*1.2*S)}ctx.lineTo(W,surfY+2*S);ctx.fill()}
+}
+function drawAnt(a){const L=a.size;ctx.save();ctx.translate(a.x,a.y);ctx.rotate(a.a);
+  const c=a.col,body=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.strokeStyle=body;ctx.lineWidth=Math.max(.7,L*.065);ctx.lineCap='round';
+  const sw=Math.sin(a.ph);
+  for(let s=-1;s<=1;s+=2)for(let i=0;i<3;i++){const g=((i+(s>0?1:0))%2?1:-1)*sw;const bx=L*(.1-i*.07);
+    ctx.beginPath();ctx.moveTo(bx,0);ctx.lineTo(bx+L*(.16-i*.2)+g*L*.08,s*L*.26);ctx.lineTo(bx+L*(.28-i*.38)+g*L*.13,s*L*(.42+(i===1?.04:0)));ctx.stroke()}
+  ctx.fillStyle=body;
+  ctx.beginPath();ctx.ellipse(-L*(a.queen?.44:.36),0,L*(a.queen?.32:.25),L*(a.queen?.21:.18),0,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(-L*.12,0,L*.06,0,7);ctx.fill();
+  ctx.beginPath();ctx.ellipse(L*.05,0,L*.15,L*.085,0,0,7);ctx.fill();
+  ctx.beginPath();ctx.ellipse(L*.3,0,L*.13,L*.115,0,0,7);ctx.fill();
+  const aw=Math.sin(a.ph*.7+1)*.08;ctx.lineWidth=Math.max(.5,L*.04);
+  for(let s=-1;s<=1;s+=2){ctx.beginPath();ctx.moveTo(L*.38,s*L*.05);ctx.lineTo(L*.5,s*L*(.2+aw*s));ctx.lineTo(L*.66,s*L*(.13-aw*s));ctx.stroke()}
+  ctx.fillStyle='rgba(255,230,200,.22)';ctx.beginPath();ctx.ellipse(-L*(a.queen?.4:.33),-L*.07,L*.1,L*.05,0,0,7);ctx.fill();
+  if(a.carry){const x=L*.52;if(a.carry==='grain'){ctx.fillStyle='#9a7448';ctx.beginPath();ctx.arc(x,0,L*.14,0,7);ctx.fill()}else if(a.carry==='egg'){ctx.fillStyle='#fbf6ea';ctx.beginPath();ctx.ellipse(x,0,L*.15,L*.1,0,0,7);ctx.fill()}else drawFoodItem(x,0,a.carry,L*.09,0)}
+  ctx.restore()}
+function drawPher(){const w=pherC.width,h=pherC.height,img=pherCtx.createImageData(w,h),d=img.data,p=N.ph;
+  for(let i=0;i<p.length;i++){const v=p[i];if(v>0){const j=i*4;d[j]=215;d[j+1]=240;d[j+2]=140;d[j+3]=Math.min(75,v*110)}}pherCtx.putImageData(img,0,0)}
+let pherTick=0;
+function draw(){
+  const L=light(),rain=raining();
+  ctx.setTransform(DPR,0,0,DPR,0,0);ctx.fillStyle='#1d140d';ctx.fillRect(0,0,innerWidth,innerHeight);
+  ctx.setTransform(DPR*VS,0,0,DPR*VS,DPR*VX,DPR*VY);
+  ctx.save();ctx.beginPath();ctx.rect(0,0,W,H);ctx.clip();
+  drawSky(L,rain);
+  if(nestDirty)compose();
+  ctx.drawImage(nestC,0,surfY*R,W*R,(H-surfY)*R,0,surfY,W,H-surfY);
+  drawContents();
+  if(ST.trail){if((pherTick++)%6===0)drawPher();ctx.globalAlpha=.75;ctx.imageSmoothingEnabled=true;ctx.drawImage(pherC,0,0,pherC.width*6,pherC.height*6);ctx.globalAlpha=1}
+  for(const a of N.ants)if(!a.surf)drawAnt(a);drawAnt(N.queen);
+  // underground night dim
+  const dim=(1-L)*.38;if(dim>0){ctx.fillStyle=`rgba(12,8,24,${dim})`;ctx.fillRect(0,surfY,W,H-surfY)}
+  drawSurface(L);
+  for(const a of N.ants)if(a.surf)drawAnt(a);
+  if(L<1){ctx.fillStyle=`rgba(10,14,40,${(1-L)*.35})`;ctx.fillRect(0,0,W,surfY)}
+  // precipitation
+  const snowing=rain&&rain.snow;
+  if(rain&&!snowing){ctx.strokeStyle='rgba(200,215,235,.45)';ctx.lineWidth=1;ctx.beginPath();const r=mul32(7);for(let i=0;i<W/6;i++){const x=(r()*W+N.t*40)%W,y=(r()*surfY+N.t*(380+r()*80))%surfY;ctx.moveTo(x,y);ctx.lineTo(x-2,y+9*S)}ctx.stroke()}
+  if(snowing||season()===3&&!rain&&false){}
+  if(snowing){ctx.fillStyle='rgba(255,255,255,.85)';const r=mul32(9);for(let i=0;i<W/9;i++){const x=(r()*W+Math.sin(N.t*.5+i)*12+N.t*6)%W,y=(r()*surfY+N.t*(18+r()*12))%surfY;ctx.beginPath();ctx.arc(x,y,(1+r()*1.4)*S,0,7);ctx.fill()}}
+  // glass
+  const gg=ctx.createLinearGradient(0,0,W,0);gg.addColorStop(0,'rgba(255,255,255,.07)');gg.addColorStop(.18,'rgba(255,255,255,0)');gg.addColorStop(.62,'rgba(255,255,255,0)');gg.addColorStop(.7,'rgba(255,255,255,.05)');gg.addColorStop(.74,'rgba(255,255,255,0)');ctx.fillStyle=gg;ctx.fillRect(0,surfY,W,H-surfY);
+  ctx.restore();
+  ctx.strokeStyle='#3a2716';ctx.lineWidth=6;ctx.strokeRect(-3,-3,W+6,H+6);
+}
+
+// ---------- descriptions ----------
+const JOBD={dig:['穴掘り係','あごで土をかじり取り、ひと粒ずつ地上へ運び出します。巣の入口の小山はこうしてできます。'],forage:['エサ集め係','地上でたねやパンくずを見つけ、巣の食料庫へ運びます。帰り道に道しるべのにおいを残します。'],
+ carry:['卵運び係','女王が産んだ卵を、子ども部屋へそっと運んでいます。'],nurse:['子育て係','幼虫にエサを分け、体をなめてきれいに保つ世話係です。'],rest:['休憩中','寒い日や夜は、深い部屋に集まってじっと過ごします。'],
+ patrol:['見回り係','巣のまわりを歩いて、エサや危険がないか見張っています。'],idle:['働きアリ','部屋でひと休み中。次の仕事を待っています。'],'':['働きアリ','巣の中を行き来する働きアリ。みんなメスです。']};
+const ROOMD={royal:['女王の部屋','巣でいちばん大切な部屋。女王はここで一生、卵を産み続けます。'],nursery:['子ども部屋','卵・幼虫・さなぎを育てる部屋。温度と湿り気のちょうどよい場所が選ばれます。'],
+ food:['食料庫','集めたたねやパンくずをためておく部屋。幼虫の大切な食べ物です。'],rest:['休憩部屋','働きアリたちが休んだり、冬にかたまって過ごす部屋です。'],trash:['ゴミ部屋','食べかすなどを捨てる部屋。巣を清潔に保つためにちゃんと分けています。']};
+const BROODD=[['卵','白くて小さな卵。2週間ほどで幼虫になります。'],['幼虫','足のないイモムシのような姿。働きアリからエサをもらって大きくなります。'],['さなぎ','まゆの中で大人のアリへと変身中。もうすぐ働きアリが生まれます。']];
+const FOODD={seed:['草のたね','アリの大好物。食料庫にたくわえられます。'],crumb:['パンくず','だれかが落としたパンくず。みんなで少しずつ運びます。'],bug:['小さな虫','貴重なたんぱく質。幼虫の成長に欠かせません。'],sugar:['砂糖つぶ','甘いものは働きアリのエネルギー源です。'],petal:['花びら','においにつられて運ばれてきた花びら。']};
+const pop=document.getElementById('pop');let popT=0;
+function showPop(t,b,sx,sy){pop.innerHTML=`<b>${t}</b>${b}`;pop.classList.add('on');const w=230;let x=sx+14,y=sy-20;if(x+w>innerWidth-8)x=sx-w-14;if(x<8)x=8;pop.style.left=x+'px';pop.style.top=Math.max(8,Math.min(innerHeight-120,y))+'px';clearTimeout(popT);popT=setTimeout(()=>pop.classList.remove('on'),4000)}
+function hit(wx,wy){const tol=Math.max(10*S,14/VS);
+  if(Math.hypot(N.queen.x-wx,N.queen.y-wy)<tol*1.2)return['女王アリ','巣の母。ひときわ大きな体で、毎日たくさんの卵を産みます。結婚飛行のあと、自分で羽を落としました。'];
+  let best=null,bd=tol;for(const a of N.ants){const d=Math.hypot(a.x-wx,a.y-wy);if(d<bd){bd=d;best=a}}
+  if(best){const j=JOBD[best.job]||JOBD[''];let extra=best.carry==='grain'?'（いま土を運んでいます）':best.carry==='egg'?'（いま卵を運んでいます）':best.carry?`（いま${FOODD[best.carry][0]}を運んでいます）`:'';return[j[0],j[1]+extra]}
+  for(const n of N.nodes){if(n.kind==='ent'||n.prog<.3)continue;for(const b of n.brood){if(Math.hypot(n.x+b.ox*n.rx*1.6-wx,n.y+n.ry*.62-wy)<6*S)return BROODD[b.st]}}
+  for(const f of N.food)if(f.amt>0&&Math.abs(f.x-wx)<10*S&&Math.abs(surfY-wy)<10*S)return FOODD[f.kind];
+  for(const n of N.nodes){if(n.kind==='ent'||n.prog<.3)continue;if(ellHit(n,wx,wy,4*S,4*S)){const r=ROOMD[n.kind];let ex=n.done?'':'（いま掘っている途中）';if(n.kind==='food')ex+=`　たくわえ：${n.store}`;if(n.kind==='nursery')ex+=`　子ども：${n.brood.length}`;return[r[0],r[1]+ex]}}
+  if(N.dig&&N.dig.dug>0){for(let i=0;i<N.dig.dug;i++){const q=N.dig.pts[i];if(Math.hypot(q[0]-wx,q[1]-wy)<7*S)return['掘りかけのトンネル','働きアリが少しずつ掘り進めている新しい通路。先にまた部屋ができる予定です。']}}
+  for(const n of N.nodes)for(let i=0;i<n.dug;i+=2){const q=n.pts[i];if(Math.hypot(q[0]-wx,q[1]-wy)<6*S)return['トンネル','部屋と部屋をつなぐ通路。アリが体ひとつ分通れる太さです。']}
+  if(Math.abs(wx-N.entX)<N.mw&&wy<surfY+8*S&&wy>surfY-N.mh-14*S)return['巣の入口と土の山',`掘り出した土を積み上げた小山。これまでに運び出した土：${N.grains}粒`];
+  if(wy<surfY-50*S)return light()>.4?['空','晴れた日はエサ探しの好機。雨の日はアリたちも巣にこもります。']:['夜空','夜になるとアリたちは巣に戻り、深い部屋で休みます。'];
+  if(wy<surfY+4*S)return[['春の草地','草花が芽吹き、アリたちの活動が始まる季節。'],['夏の草地','いちばんにぎやかな季節。エサもたくさん見つかります。'],['秋の草地','冬に備えて、食料をせっせとたくわえる季節。'],['冬の地面','寒さでアリはほとんど外に出ず、巣の奥でじっと春を待ちます。']][season()];
+  return['土','観察ケースの土。ガラス越しに巣の断面が見えています。']}
+cv.addEventListener('pointerdown',e=>{if(panel.classList.contains('on')){panel.classList.remove('on');return}const wx=(e.clientX-VX)/VS,wy=(e.clientY-VY)/VS;const r=hit(wx,wy);if(r)showPop(r[0],r[1],e.clientX,e.clientY)});
+
+// ---------- sound ----------
+let AC=null,SN={};
+function startSound(){if(AC){AC.resume();return}AC=new(window.AudioContext||window.webkitAudioContext)();const len=AC.sampleRate*2,buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);let b=0;for(let i=0;i<len;i++){const w=Math.random()*2-1;b=(b+.02*w)/1.02;d[i]=b*3.5}
+  const wb=AC.createBuffer(1,len,AC.sampleRate),wd=wb.getChannelData(0);for(let i=0;i<len;i++)wd[i]=Math.random()*2-1;
+  const mk=(bf,type,f,g)=>{const s=AC.createBufferSource();s.buffer=bf;s.loop=true;const fl=AC.createBiquadFilter();fl.type=type;fl.frequency.value=f;const gn=AC.createGain();gn.gain.value=g;s.connect(fl);fl.connect(gn);gn.connect(SN.master);s.start();return gn};
+  SN.master=AC.createGain();SN.master.gain.value=.8;SN.master.connect(AC.destination);SN.earth=mk(buf,'lowpass',500,.05);SN.rain=mk(wb,'bandpass',1800,0);SN.next=0}
+function soundTick(){if(!AC||!ST.sound)return;const now=AC.currentTime,L=light(),rain=raining();SN.rain.gain.setTargetAtTime(rain&&!rain.snow?.05:0,now,1);
+  if(now>SN.next){SN.next=now+.4+Math.random()*1.5;
+    if(L<.3&&season()!==3){for(let k=0;k<3;k++){const o=AC.createOscillator(),g=AC.createGain();o.frequency.value=4300+Math.random()*300;g.gain.value=0;const t=now+k*.07;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.018,t+.01);g.gain.linearRampToValueAtTime(0,t+.045);o.connect(g);g.connect(SN.master);o.start(t);o.stop(t+.06)}}
+    else if(L>.6&&!rain&&season()!==3&&Math.random()<.35){const o=AC.createOscillator(),g=AC.createGain();const f=2200+Math.random()*1500;o.frequency.setValueAtTime(f,now);o.frequency.exponentialRampToValueAtTime(f*1.4,now+.12);g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(.02,now+.02);g.gain.linearRampToValueAtTime(0,now+.14);o.connect(g);g.connect(SN.master);o.start(now);o.stop(now+.16)}
+    else if(Math.random()<.5){const o=AC.createOscillator(),g=AC.createGain();o.type='triangle';o.frequency.value=180+Math.random()*120;g.gain.setValueAtTime(.012,now);g.gain.exponentialRampToValueAtTime(.0001,now+.05);o.connect(g);g.connect(SN.master);o.start(now);o.stop(now+.06)}}}
+
+// ---------- UI ----------
+const panel=document.getElementById('panel');
+document.getElementById('bSet').onclick=e=>{e.stopPropagation();panel.classList.toggle('on')};
+function seg(id,key,after){const el=document.getElementById(id);el.onclick=e=>{const b=e.target.closest('button');if(!b)return;ST[key]=+b.dataset.v;save();syncUI();after&&after()}}
+seg('sSpeed','speed');seg('sSound','sound',()=>{if(ST.sound)startSound();else if(AC)AC.suspend()});seg('sTrail','trail',()=>{if(!ST.trail)N.ph.fill(0)});
+document.getElementById('bNew').onclick=()=>{newNest();panel.classList.remove('on')};
+function syncUI(){for(const[id,k]of[['sSpeed','speed'],['sSound','sound'],['sTrail','trail']])for(const b of document.getElementById(id).children)b.classList.toggle('on',+b.dataset.v===ST[k])}
+const hud=document.getElementById('hud');let uiT=0;
+function stats(){const rooms=chambers().length;document.getElementById('stA').textContent=N.ants.length+1;document.getElementById('stR').textContent=rooms;document.getElementById('stD').textContent=N.dayNo+1;
+  const t=tod();const tn=t<.05||t>.97?'夜明け':t<.45?'昼':t<.55?'夕方':'夜';hud.textContent=`${N.dayNo+1}日目・${SEASONS[season()]}・${raining()?(raining().snow?'雪':'雨'):tn}`}
+let last=performance.now();
+function frame(now){let dt=Math.min(.1,(now-last)/1000);last=now;let sd=dt*SPEEDS[ST.speed]*(window.__speedMul||1);while(sd>0){const s=Math.min(.1,sd);update(s);sd-=s}
+  draw();soundTick();if(now-uiT>500){uiT=now;stats()}requestAnimationFrame(frame)}
+addEventListener('resize',()=>{const ow=W,oh=H;if(Math.abs(innerWidth/innerHeight-ow/oh)>.35&&N.t<20)newNest();else fit()});
+document.addEventListener('visibilitychange',()=>{last=performance.now();if(AC&&ST.sound){document.hidden?AC.suspend():AC.resume()}});
+addEventListener('pointerdown',()=>{if(ST.sound&&!AC)startSound()},{once:true});
+newNest();syncUI();requestAnimationFrame(frame);
+window.__ant={get N(){return N},ff(sec){while(sec>0){update(.1);sec-=.1}},newNest,ST,syncUI,hit};
+</script></body></html>
