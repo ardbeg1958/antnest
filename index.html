@@ -116,13 +116,13 @@ function addNode(p,x,y,kind){const P=N.nodes[p];const rx=(kind==='royal'?34:kind
   const n={id:N.nodes.length,p,x,y,kind,rx,ry:rx*.46,pts:wobble(P.x,P.y,x,y),dug:0,prog:0,done:false,brood:[],store:0,trash:0,kids:0,depth:P.depth+1};
   P.kids++;N.nodes.push(n);return n}
 function ellHit(n,x,y,mx,my){const dx=(x-n.x)/(n.rx+mx),dy=(y-n.y)/(n.ry+my);return dx*dx+dy*dy<1}
-function planNext(){
-  const ch=N.nodes.filter(n=>n.kind!=='ent');const k=KSEQ[(ch.length-1)%KSEQ.length];
+function planNext(kind,minY){
+  const ch=N.nodes.filter(n=>n.kind!=='ent');const k=kind||KSEQ[(ch.length-1)%KSEQ.length];
   const parents=ch.filter(n=>n.done&&n.kids<3);if(!parents.length)return null;
   for(let t=0;t<80;t++){const P=parents[rnd()*parents.length|0];let ang;const u=rnd();
     if(u<.25){ang=rnd()<.5?(-.08+rnd()*.3)*Math.PI:Math.PI-(-.08+rnd()*.3)*Math.PI}else ang=(.18+rnd()*.64)*Math.PI;
     const len=(75+rnd()*95)*S*Math.max(1,Math.sqrt((H-surfY)/(560*S))),x=P.x+Math.cos(ang)*len,y=P.y+Math.sin(ang)*len;const rx=36*S,ry=17*S;
-    if(x<rx+18||x>W-rx-18||y<surfY+75*S||y>H-ry-22)continue;
+    if(x<rx+18||x>W-rx-18||y<surfY+75*S||y>H-ry-22||minY&&y<minY)continue;
     let ok=true;for(const n of ch){const dx=(x-n.x)/(n.rx+rx+26*S),dy=(y-n.y)/(n.ry+ry+20*S);if(dx*dx+dy*dy<1){ok=false;break}}
     if(!ok)continue;
     for(let s=1;s<8&&ok;s++){const sx=lerp(P.x,x,s/8),sy=lerp(P.y,y,s/8);
@@ -141,6 +141,38 @@ function path(a,b){if(a===b)return[];const A=anc(a),B=anc(b);let l=-1;for(const 
 function spot(n,floor=true){const r=rnd()*2-1;return[n.x+r*n.rx*.72,n.y+n.ry*(floor?.25+rnd()*.45:(rnd()-.5)*.8)]}
 function moundH(x){const d=(x-N.entX)/N.mw;return d*d<1?N.mh*(1-d*d)*(1-.35*Math.exp(-d*d*40)):0}
 function surfAt(x){return surfY-moundH(x)}
+
+// ---------- queen chamber growth / relocation ----------
+const RMAX=1.55;
+function canGrow(n,nrx){const nry=nrx*.46,m=9*S;if(n.x-nrx<14||n.x+nrx>W-14||n.y-nry<surfY+40*S||n.y+nry>H-14)return false;
+  const e={x:n.x,y:n.y,rx:nrx,ry:nry};
+  for(const o of N.nodes){if(o===n||o.kind==='ent')continue;
+    if(o.prog>0&&Math.abs(o.x-n.x)<o.rx+nrx+m&&Math.abs(o.y-n.y)<o.ry+nry+m){const dx=(o.x-n.x)/(o.rx+nrx+m),dy=(o.y-n.y)/(o.ry+nry+m);if(dx*dx+dy*dy<1)return false}
+    const own=o.p===n.id;const pts=o.pts.slice(0,o.dug);
+    for(let i=0;i<pts.length;i++){const q=pts[i];if(own&&Math.hypot(q[0]-n.x,q[1]-n.y)<n.rx+14*S)continue;if(ellHit(e,q[0],q[1],m,m))return false}}
+  for(const q of n.pts){if(Math.hypot(q[0]-n.x,q[1]-n.y)<n.rx+14*S)continue;if(ellHit(e,q[0],q[1],m*.6,m*.6))return false}
+  return true}
+function growStep(){const n=N.royal;if(!n.base)n.base=n.rx;const nrx=n.rx+2.2*S;
+  if(nrx>n.base*RMAX||!canGrow(n,nrx)){n.full=true;return false}
+  n.rx=nrx;n.ry=nrx*.46;carveEllipse(n,1);for(const p of n.pts.slice(-2))carveCircle(p[0],p[1],4.2*S);
+  for(const o of N.nodes)if(o.p===n.id)for(let i=0;i<Math.min(o.dug,6);i++)carveCircle(o.pts[i][0],o.pts[i][1],4.2*S);
+  N.royalGrown=(N.royalGrown||0)+1;return true}
+function planWiden(ant,pl){const n=N.royal;goTo(ant,n.id,pl);const sd=rnd()<.5?-1:1;
+  pl.push({t:'pts',p:[[n.x+sd*n.rx*.8,n.y+n.ry*.1]]});pl.push({t:'wait',d:1.5+rnd()*1.5});
+  pl.push({t:'do',f:()=>{if(N.widen&&n===N.royal){N.widen=false;if(growStep())ant.carry='grain'}}});
+  pl.push({t:'pts',p:[[n.x,n.y]]});pl.push({t:'pts',p:path(n.id,0)});ant.node=0;
+  const dx=N.entX+(rnd()<.5?-1:1)*(N.mw*(.35+rnd()*.6));pl.push({t:'surf',x:dx});
+  pl.push({t:'do',f:()=>{if(ant.carry==='grain'){N.grains++;N.mh=Math.min(28*S,(4+Math.sqrt(N.grains)*1.3)*S);N.mw=Math.min(95*S,(30+Math.sqrt(N.grains)*3)*S)}ant.carry=null}});
+  pl.push({t:'surf',x:N.entX})}
+function planEscort(a,pl){const old=N.nodes[N.moving.from],nr=N.nodes[N.moving.to];const b=old.brood.find(b=>b.st<2&&!b.tk);if(b)b.tk=1;goTo(a,old.id,pl);
+  if(b){pl.push({t:'pts',p:[[old.x+b.ox*old.rx*1.6,old.y+old.ry*.45]]});pl.push({t:'do',f:()=>{const j=old.brood.indexOf(b);if(j>=0){old.brood.splice(j,1);a.cb=b;a.carry='egg'}}})}
+  pl.push({t:'pts',p:[[old.x,old.y]]});pl.push({t:'pts',p:path(old.id,nr.id)});a.node=nr.id;
+  const ox=(rnd()-.5)*.5;pl.push({t:'pts',p:[[nr.x+ox*nr.rx*1.6,nr.y+nr.ry*.45]]});
+  pl.push({t:'do',f:()=>{if(a.cb){a.cb.ox=ox;delete a.cb.tk;nr.brood.push(a.cb);a.cb=null;N.carried=(N.carried||0)+1}a.carry=null}});pl.push({t:'wait',d:2+rnd()*3});a.off=true}
+function startMove(nr){const old=N.royal,q=N.queen;old.kind='nursery';N.royal=nr;N.moving={from:old.id,to:nr.id,t:0};N.moves=(N.moves||0)+1;
+  // queen walks
+  const pl=[];goTo(q,nr.id,pl);pl.push({t:'pts',p:[[nr.x,nr.y+nr.ry*.25]]});pl.push({t:'do',f:()=>{q.off=true;N.moving=null;N.movesDone=(N.movesDone||0)+1}});q.plan=pl;
+  if(window.__antLog)__antLog('move start')}
 
 // ---------- ants ----------
 function mkAnt(n,q){const s=spot(n);return{x:s[0],y:s[1],a:rnd()*6,node:n.id,off:true,plan:[],carry:null,ph:rnd()*6,queen:!!q,surf:false,job:'',lay:10,size:(q?18:11.5+rnd()*1.5)*S,col:q?[92,40,22]:[38+rnd()*14|0,22+rnd()*8|0,14]}}
@@ -176,6 +208,8 @@ function choose(ant){
   ant.job='';
   if(se===3&&!(N.dig&&rnd()<.15&&count('dig')<2)){const deep=chambers().sort((a,b)=>b.y-a.y).slice(0,2);ant.job='rest';wanderIn(ant,pick(deep),pl,3);ant.plan=pl;return}
   if(N.dig&&count('dig')<Math.max(2,Math.min(6,pop/5))&&rnd()<.7&&!rain){ant.job='dig';planDig(ant,pl);ant.plan=pl;return}
+  if(N.moving&&count('escort')<4&&rnd()<.8){ant.job='escort';planEscort(ant,pl);ant.plan=pl;return}
+  if(N.widen&&count('widen')<1&&rnd()<.6&&!rain){ant.job='widen';planWiden(ant,pl);ant.plan=pl;return}
   const roy=N.royal,nurs=chambers(n=>n.kind==='nursery');
   if(roy.brood.some(b=>b.st===0)&&nurs.length&&count('carry')<2&&rnd()<.6){ant.job='carry';planCarry(ant,pl,nurs);ant.plan=pl;return}
   if(L>.5&&!rain&&N.food.some(f=>f.amt>0)&&count('forage')<Math.max(2,pop/3)&&rnd()<.8){ant.job='forage';planForage(ant,pl);ant.plan=pl;return}
@@ -192,7 +226,7 @@ function planDig(ant,pl){const n=N.dig;goTo(ant,n.p,pl);const tip=n.pts.slice(0,
   pl.push({t:'do',f:()=>{if(ant.carry==='grain'){N.grains++;N.mh=Math.min(28*S,(4+Math.sqrt(N.grains)*1.3)*S);N.mw=Math.min(95*S,(30+Math.sqrt(N.grains)*3)*S)}ant.carry=null}});
   pl.push({t:'surf',x:N.entX})}
 function digStep(n){if(n.dug<n.pts.length){const e=Math.min(n.pts.length,n.dug+3);for(let i=n.dug;i<e;i++)carveCircle(n.pts[i][0],n.pts[i][1],4.2*S);n.dug=e}
-  else{n.prog=Math.min(1,n.prog+.14);carveEllipse(n,n.prog);if(n.prog>=1){n.done=true;N.dig=null;N.digCool=10+N.nodes.length*3}}}
+  else{n.prog=Math.min(1,n.prog+.14);carveEllipse(n,n.prog);if(n.prog>=1){n.done=true;N.dig=null;N.digCool=10+N.nodes.length*3;if(n.kind==='royal'&&n!==N.royal)startMove(n)}}}
 function planForage(ant,pl){const f=pick(N.food.filter(f=>f.amt>0));goTo(ant,0,pl);pl.push({t:'surf',x:f.x+(rnd()-.5)*6*S});pl.push({t:'wait',d:1+rnd()});
   pl.push({t:'do',f:()=>{if(f.amt>0){f.amt--;ant.carry=f.kind}}});pl.push({t:'surf',x:N.entX});
   const fc=chambers(n=>n.kind==='food');const tgt=fc.length?pick(fc):N.royal;pl.push({t:'pts',p:path(0,tgt.id)});ant.node=tgt.id;
@@ -223,7 +257,16 @@ function qPlan(q){const r=N.royal;q.plan=[{t:'pts',p:[[r.x+(rnd()-.5)*r.rx*.6,r.
 function update(dt){
   const d0=Math.floor(N.t/DAY);N.t+=dt;const d1=Math.floor(N.t/DAY);if(d1!==d0)newDay(d1);
   const se=season(),L=light(),rain=raining();
-  if(!N.dig){N.digCool-=dt;if(N.digCool<=0){N.dig=planNext();N.digCool=30}}
+  const kGrow=window.__qMul||1;
+  if(!N.dig){N.digCool-=dt;if(N.digCool<=0){
+    if(N.wantMove){N.wantMove=false;const ch=chambers();let nr=planNext('royal',N.royal.y+30*S)||planNext('royal');if(nr){N.dig=nr}else N.moveCool=600}
+    else N.dig=planNext();N.digCool=30}}
+  // royal chamber widens as the colony grows
+  if(!N.moving&&!N.widen&&!N.royal.full){N.growCool=(N.growCool??60)-dt*kGrow;const want=1+Math.min(1,(N.ants.length-7)/40)*(RMAX-1);
+    if(N.growCool<=0){N.growCool=50+rnd()*50;if(!N.royal.base)N.royal.base=N.royal.rx;if(N.royal.rx<N.royal.base*want&&season()!==3)N.widen=true}}
+  // occasional relocation
+  if(N.moveCool===undefined)N.moveCool=2400+rnd()*2400;
+  if(!N.moving&&!N.wantMove&&!(N.dig&&N.dig.kind==='royal')&&chambers().length>=5){N.moveCool-=dt*kGrow;if(N.moveCool<=0&&season()!==3){N.moveCool=2400+rnd()*2400;N.wantMove=true;N.digCool=Math.min(N.digCool,5)}}
   // queen laying
   const pop=N.ants.length,broodN=N.nodes.reduce((s,n)=>s+n.brood.length,0);
   N.queen.lay-=dt;if(N.queen.lay<=0){N.queen.lay=26+rnd()*14;if(se!==3&&pop+broodN<64&&N.royal.brood.length<10){N.royal.brood.push({st:0,t:0,ox:(rnd()-.5)*.5})}}
@@ -282,9 +325,9 @@ function drawSurface(L){
   for(const f of N.food){if(f.amt<=0)continue;const r2=mul32(f.r*1e5|0);for(let i=0;i<f.amt;i++)drawFoodItem(f.x+(r2()-.5)*8*S,surfY-1.5*S-r2()*3*S,f.kind,S,r2()*3)}
   if(se===3){ctx.fillStyle='rgba(245,248,255,.92)';ctx.beginPath();ctx.moveTo(0,surfY+2*S);for(let x=0;x<=W;x+=8){ctx.lineTo(x,surfAt(x)-3*S-Math.sin(x*.05)*1.2*S)}ctx.lineTo(W,surfY+2*S);ctx.fill()}
 }
-function drawAnt(a){const L=a.size*(a.surf?1:1.15);ctx.save();ctx.translate(a.x,a.y);
-  if(!a.surf){const hg=ctx.createRadialGradient(0,0,0,0,0,L*.9);hg.addColorStop(0,'rgba(255,225,160,.32)');hg.addColorStop(1,'rgba(255,225,160,0)');ctx.fillStyle=hg;ctx.beginPath();ctx.arc(0,0,L*.9,0,7);ctx.fill();
-    ctx.fillStyle='rgba(30,15,5,.28)';ctx.beginPath();ctx.ellipse(L*.06,L*.1,L*.55,L*.2,a.a,0,7);ctx.fill()}
+function drawAnt(a){const L=a.size;ctx.save();ctx.translate(a.x,a.y);
+  if(!a.surf){const hg=ctx.createRadialGradient(0,0,0,0,0,L*.6);hg.addColorStop(0,'rgba(255,225,160,.22)');hg.addColorStop(1,'rgba(255,225,160,0)');ctx.fillStyle=hg;ctx.beginPath();ctx.arc(0,0,L*.6,0,7);ctx.fill();
+    ctx.fillStyle='rgba(30,15,5,.28)';ctx.beginPath();ctx.ellipse(L*.04,L*.06,L*.48,L*.14,a.a,0,7);ctx.fill()}
   ctx.rotate(a.a);
   const c=a.col,body=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.strokeStyle=body;ctx.lineWidth=Math.max(.7,L*.065);ctx.lineCap='round';
   const sw=Math.sin(a.ph);
