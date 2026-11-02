@@ -19,6 +19,7 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 .row{margin:8px 0}.lab{opacity:.75;font-size:12px;margin-bottom:4px}
 .seg{display:flex;gap:4px;flex-wrap:wrap}
 .seg button,.btn{flex:1;min-width:0;padding:7px 4px;border-radius:8px;border:1px solid #fff2;background:#3a2a1e;color:#f4e6cf;font-size:12px;cursor:pointer;white-space:nowrap}
+#sSpeed button{flex:1 1 30%}
 .seg button.on{background:#c8925a;color:#20140b;border-color:#c8925a}
 .btn{width:100%;margin-top:4px;background:#5a3e26}
 #stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center;margin-top:6px}
@@ -33,7 +34,7 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 <div id="pop"></div>
 <button id="bSet" aria-label="設定">⚙︎</button>
 <div id="panel"><h3>アリの巣観察</h3>
-<div class="row"><div class="lab">時間の速さ</div><div class="seg" id="sSpeed"><button data-v="0">もっとゆっくり</button><button data-v="1">ゆっくり</button><button data-v="2">ふつう</button><button data-v="3">はやく</button></div></div>
+<div class="row"><div class="lab">時間の速さ</div><div class="seg" id="sSpeed"><button data-v="0">もっとゆっくり</button><button data-v="1">ゆっくり</button><button data-v="2">ふつう</button><button data-v="3">はやく</button><button data-v="4">もっとはやく</button></div></div>
 <div class="row"><div class="lab">音</div><div class="seg" id="sSound"><button data-v="0">オフ</button><button data-v="1">オン</button></div></div>
 <div class="row"><div class="lab">道しるべ（フェロモン）</div><div class="seg" id="sTrail"><button data-v="0">かくす</button><button data-v="1">みせる</button></div></div>
 <div id="stats"><div><b id="stA">0</b><span>アリの数</span></div><div><b id="stR">0</b><span>部屋数</span></div><div><b id="stD">1</b><span>日数</span></div></div>
@@ -44,7 +45,7 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 'use strict';
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 const DPR=Math.min(2,window.devicePixelRatio||1);
-const SPEEDS=[0.35,0.6,1,2];
+const SPEEDS=[0.35,0.6,1,2,4];
 const S0={speed:1,sound:0,trail:1};
 let ST=Object.assign({},S0);try{Object.assign(ST,JSON.parse(localStorage.getItem('antnest_v1')||'{}'))}catch(e){}
 function save(){try{localStorage.setItem('antnest_v1',JSON.stringify(ST))}catch(e){}}
@@ -85,11 +86,11 @@ function makeSoil(){
   rimC.getContext('2d').scale(R,R);inC.getContext('2d').scale(R,R);nestDirty=true;
 }
 function carveCircle(x,y,r){const a=rimC.getContext('2d'),b=inC.getContext('2d');
-  a.fillStyle='#24160c';a.beginPath();a.arc(x,y,r+1.7*S,0,7);a.fill();
-  b.fillStyle='#3e2a1b';b.beginPath();b.arc(x,y,r,0,7);b.fill();nestDirty=true}
+  a.fillStyle='#3a2414';a.beginPath();a.arc(x,y,r+1.7*S,0,7);a.fill();
+  b.fillStyle='#9c7650';b.beginPath();b.arc(x,y,r,0,7);b.fill();nestDirty=true}
 function carveEllipse(n,p){const a=rimC.getContext('2d'),b=inC.getContext('2d');const rx=n.rx*p,ry=n.ry*(.35+.65*p);
-  a.fillStyle='#24160c';a.beginPath();a.ellipse(n.x,n.y,rx+1.8*S,ry+1.8*S,0,0,7);a.fill();
-  const gr=b.createLinearGradient(0,n.y-ry,0,n.y+ry);gr.addColorStop(0,'#2e1f13');gr.addColorStop(.7,'#433020');gr.addColorStop(1,'#4d3824');
+  a.fillStyle='#3a2414';a.beginPath();a.ellipse(n.x,n.y,rx+1.8*S,ry+1.8*S,0,0,7);a.fill();
+  const gr=b.createLinearGradient(0,n.y-ry,0,n.y+ry);gr.addColorStop(0,'#86623f');gr.addColorStop(.55,'#a8825a');gr.addColorStop(1,'#b48d62');
   b.fillStyle=gr;b.beginPath();b.ellipse(n.x,n.y,rx,ry,0,0,7);b.fill();nestDirty=true}
 function compose(){const g=nestC.getContext('2d');g.clearRect(0,0,nestC.width,nestC.height);g.drawImage(soilC,0,0);g.drawImage(rimC,0,0);g.drawImage(inC,0,0);nestDirty=false}
 
@@ -281,7 +282,10 @@ function drawSurface(L){
   for(const f of N.food){if(f.amt<=0)continue;const r2=mul32(f.r*1e5|0);for(let i=0;i<f.amt;i++)drawFoodItem(f.x+(r2()-.5)*8*S,surfY-1.5*S-r2()*3*S,f.kind,S,r2()*3)}
   if(se===3){ctx.fillStyle='rgba(245,248,255,.92)';ctx.beginPath();ctx.moveTo(0,surfY+2*S);for(let x=0;x<=W;x+=8){ctx.lineTo(x,surfAt(x)-3*S-Math.sin(x*.05)*1.2*S)}ctx.lineTo(W,surfY+2*S);ctx.fill()}
 }
-function drawAnt(a){const L=a.size;ctx.save();ctx.translate(a.x,a.y);ctx.rotate(a.a);
+function drawAnt(a){const L=a.size*(a.surf?1:1.15);ctx.save();ctx.translate(a.x,a.y);
+  if(!a.surf){const hg=ctx.createRadialGradient(0,0,0,0,0,L*.9);hg.addColorStop(0,'rgba(255,225,160,.32)');hg.addColorStop(1,'rgba(255,225,160,0)');ctx.fillStyle=hg;ctx.beginPath();ctx.arc(0,0,L*.9,0,7);ctx.fill();
+    ctx.fillStyle='rgba(30,15,5,.28)';ctx.beginPath();ctx.ellipse(L*.06,L*.1,L*.55,L*.2,a.a,0,7);ctx.fill()}
+  ctx.rotate(a.a);
   const c=a.col,body=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.strokeStyle=body;ctx.lineWidth=Math.max(.7,L*.065);ctx.lineCap='round';
   const sw=Math.sin(a.ph);
   for(let s=-1;s<=1;s+=2)for(let i=0;i<3;i++){const g=((i+(s>0?1:0))%2?1:-1)*sw;const bx=L*(.1-i*.07);
@@ -293,7 +297,7 @@ function drawAnt(a){const L=a.size;ctx.save();ctx.translate(a.x,a.y);ctx.rotate(
   ctx.beginPath();ctx.ellipse(L*.3,0,L*.13,L*.115,0,0,7);ctx.fill();
   const aw=Math.sin(a.ph*.7+1)*.08;ctx.lineWidth=Math.max(.5,L*.04);
   for(let s=-1;s<=1;s+=2){ctx.beginPath();ctx.moveTo(L*.38,s*L*.05);ctx.lineTo(L*.5,s*L*(.2+aw*s));ctx.lineTo(L*.66,s*L*(.13-aw*s));ctx.stroke()}
-  ctx.fillStyle='rgba(255,230,200,.22)';ctx.beginPath();ctx.ellipse(-L*(a.queen?.4:.33),-L*.07,L*.1,L*.05,0,0,7);ctx.fill();
+  ctx.fillStyle='rgba(255,230,200,.35)';ctx.beginPath();ctx.ellipse(-L*(a.queen?.4:.33),-L*.07,L*.1,L*.05,0,0,7);ctx.fill();
   if(a.carry){const x=L*.52;if(a.carry==='grain'){ctx.fillStyle='#9a7448';ctx.beginPath();ctx.arc(x,0,L*.14,0,7);ctx.fill()}else if(a.carry==='egg'){ctx.fillStyle='#fbf6ea';ctx.beginPath();ctx.ellipse(x,0,L*.15,L*.1,0,0,7);ctx.fill()}else drawFoodItem(x,0,a.carry,L*.09,0)}
   ctx.restore()}
 function drawPher(){const w=pherC.width,h=pherC.height,img=pherCtx.createImageData(w,h),d=img.data,p=N.ph;
@@ -311,7 +315,7 @@ function draw(){
   if(ST.trail){if((pherTick++)%6===0)drawPher();ctx.globalAlpha=.75;ctx.imageSmoothingEnabled=true;ctx.drawImage(pherC,0,0,pherC.width*6,pherC.height*6);ctx.globalAlpha=1}
   for(const a of N.ants)if(!a.surf)drawAnt(a);drawAnt(N.queen);
   // underground night dim
-  const dim=(1-L)*.38;if(dim>0){ctx.fillStyle=`rgba(12,8,24,${dim})`;ctx.fillRect(0,surfY,W,H-surfY)}
+  const dim=(1-L)*.18;if(dim>0){ctx.fillStyle=`rgba(12,8,24,${dim})`;ctx.fillRect(0,surfY,W,H-surfY)}
   drawSurface(L);
   for(const a of N.ants)if(a.surf)drawAnt(a);
   if(L<1){ctx.fillStyle=`rgba(10,14,40,${(1-L)*.35})`;ctx.fillRect(0,0,W,surfY)}
